@@ -9,6 +9,8 @@
 #include <WiFiMulti.h>
 #include <HTTPClient.h>
 
+unsigned long activeTime = 0;
+
 const String boxID= "asdfv";
 
 //acum//
@@ -64,7 +66,6 @@ const uint8_t purple[3] = {255,0,255};
 void setup(void){
   Serial.begin(115200);
   while (!Serial) delay(10); 
-  Serial.println("loh");
   
   btnPWD1.setType(LOW_PULL);
   
@@ -73,11 +74,13 @@ void setup(void){
   pinMode(B, OUTPUT);
   RGB_write(rgb_on);
   
+  // RTC setup
   RTC.begin();
   RTC.settimeUnix(1111111);
 
   Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
   
+  // SD card setup
   if(!SD.begin(SD_SS)){
     Serial.println("Card Mount Failed");
     while (!SD.begin(SD_SS)) {
@@ -93,11 +96,10 @@ void setup(void){
     myFile.close();
   }
   
-  nfc.begin();
-  uint32_t versiondata = nfc.getFirmwareVersion();
-  if (! versiondata) {
+  // nfc setup
+  if (!nfc.begin()) {
     Serial.println("Didn't find PN53x board");
-    while (! versiondata){
+    while (!nfc.begin()){
       RGB_error();
       delay(500);
     }
@@ -105,37 +107,57 @@ void setup(void){
   }
   Serial.println("PN53x board");
 
-  Serial2.println("AT+CSTT=\"internet.mts.ru\",\"mts\",\"mts\"");// Get IMEI
-  updateSerial();
-  Serial2.println("AT+CIICR");
-  updateSerial();
-  
-  delay(1000);
+  // sim card setup
+  int simCardFail = 0;
+  String RespCodeStr = "";
+  do{
+    if (simCardFail > 3){
+      RGB_error();
+    }
+    Serial2.println("AT+CSTT=\"internet.mts.ru\",\"mts\",\"mts\"");// Get IMEI
+    updateSerial();
+    Serial2.println("AT+CIICR");
+    updateSerial();
+    if (simCardFail > 3){
+      RGB_error();
+    }
+    Serial2.println("AT+CREG?");
+    delay(1500);
+    RespCodeStr = Serial2.readStringUntil('\n');
+    RespCodeStr = Serial2.readStringUntil('\n');
+    Serial.print("RespCodeStr = ");
+    Serial.println(RespCodeStr);
+    simCardFail++;
+  } while (!(RespCodeStr.indexOf("+CREG") >= 0));
+
   RGB_write(off);
+  activeTime = millis();
 }
 
 void loop(void) {
+
   btnPWD1.tick();
 
-  if (btnPWD1.isSingle() && start) {
-    Serial.println("btnPWD1.isSingle() && start");
-    start = false;
-  } else if (btnPWD1.isSingle() && !start) {
-    Serial.println("btnPWD1.isSingle() && !start");
+  unsigned long currentTime = millis();
+  if (currentTime - activeTime > 60000){
+    activeTime = millis();
+    Serial.println("SLEEP");
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_2, 1);
+    esp_light_sleep_start();
+  }
+
+  if (btnPWD1.isSingle()) {
+    activeTime = millis();
+    Serial.println("btnPWD1.isSingle()");
     if(readNFC()) sendDataToGSM();
   }
 
   if (btnPWD1.isDouble()) {
+    activeTime = millis();
     Serial.println("btnPWD1.isDouble()");
     show_charge(get_voltage(1), 50, 25, 10);
   }
 
-  if (btnPWD1.isTriple()) {
-    Serial.println("btnPWD1.isTriple()");
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_2, 1);
-    start = true;
-    esp_light_sleep_start();
-  }
 }
 
 void sendDataToSD(String fileName, String data){
@@ -339,7 +361,7 @@ void RGB_write(const uint8_t* color) {
 
 void RGB_error(){
   RGB_write(red);
-  delay(1000);
+  delay(300);
   RGB_write(off);
 }
 

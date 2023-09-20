@@ -9,7 +9,15 @@
 #include <WiFiMulti.h>
 #include <HTTPClient.h>
 
-const String boxID= "asdfv";
+unsigned long activeTime = 0;
+
+//WiFi////
+String boxID                    = "asdfv";
+String serverName               = "http://185.241.68.155:8001/send_data";
+const char *esp32_wifi_ssid     = "yourAP";
+const char *esp32_wifi_password = "yourPassword";
+
+WiFiServer server(80);
 
 //acum//
 #define BAT_CHARGE 34
@@ -37,34 +45,30 @@ iarduino_RTC RTC(RTC_DS1302, 27, 25, 26);
 char newChar    = 'i';
 String result   = "";
 String tagData  = "";
-bool start      = false;
 
 //RGB////
 #define B 4
 #define G 33
 #define R 32
 
-const uint8_t red[3] =    {255,0,0};    //Индикация ошибок
-const uint8_t green[3] =  {0,255,0};    //100-50% charge
+const uint8_t red[3]    = {255,0,0};    //Индикация ошибок
+const uint8_t green[3]  = {0,255,0};    //100-50% charge
 const uint8_t yellow[3] = {255,255,0};  //50-25% charge
 const uint8_t orange[3] = {255,128,0};  //25-10% charge
-
-const uint8_t off[3] =    {0,0,0};
+const uint8_t off[3]    = {0,0,0};
 const uint8_t rgb_on[3] = {255,255,255};
-const uint8_t blue[3] =   {0,128,255};
+const uint8_t blue[3]   = {0,128,255};
 const uint8_t purple[3] = {255,0,255};
 
-//WiFi////
-const char* ssid              = "Keeneti-0154";
-const char* password          = "uhBkDPUJ";
-const char* serverName        = "http://185.241.68.155:8001/send_data";
-const char* ssid_reserve      = "POCO M3";
-const char* password_reserve  = "0987654321";
-
 void setup(void){
+
   Serial.begin(115200);
   while (!Serial) delay(10); 
-  Serial.println("loh");
+
+  startAccessPoint();
+  while(1){
+        setConfigFile();
+  }
 
   btnPWD1.setType(LOW_PULL);
   
@@ -72,12 +76,12 @@ void setup(void){
   pinMode(G, OUTPUT);
   pinMode(B, OUTPUT);
   RGB_write(rgb_on);
-  
+
+  // RTC setup
   RTC.begin();
   RTC.settimeUnix(1111111);
 
-
-  // SD card
+  // SD card setup
   if(!SD.begin(SD_SS)){
     Serial.println("Card Mount Failed");
     while (!SD.begin(SD_SS)) {
@@ -93,12 +97,10 @@ void setup(void){
     myFile.close();
   }
   
-  // nfc
-  nfc.begin();
-  uint32_t versiondata = nfc.getFirmwareVersion();
-  if (! versiondata) {
+  // nfc setup
+  if (!nfc.begin()) {
     Serial.println("Didn't find PN53x board");
-    while (! versiondata){
+    while (!nfc.begin()){
       RGB_error();
       delay(500);
     }
@@ -107,33 +109,117 @@ void setup(void){
   Serial.println("PN53x board");
 
   //config setup
-  
+  if (!config_found()){
+    startAccessPoint();
+    setConfigFile();
+  }
+
   delay(1000);
   RGB_write(off);
+  activeTime = millis();
+}
+
+void network_config(WiFiMulti &wifiMulti){// Poco m3;0987654321\nwifi2id;wifi2pas;
+  Serial.println("\nOpen config file...");
+  File cfg_file = SD.open("/config.txt");
+
+  while (cfg_file.available()) {
+    String cfg_str = cfg_file.readStringUntil('\n');
+    int space_index = cfg_str.indexOf(";");
+    String ssid = cfg_str.substring(0,space_index);
+    String password = cfg_str.substring(space_index + 1);
+    const char * c_ssid = ssid.c_str();
+    const char * c_password = password.c_str();
+    Serial.println(ssid);
+    Serial.println(password);
+    wifiMulti.addAP(c_ssid, c_password);
+  }
+  cfg_file.close();
+}
+
+bool config_found() {
+  if(!SD.exists("/config.txt")) {
+    Serial.println("\nCONFIG FILE IS NOT FOUND!");
+    return false;
+  }
+  return true;
+}
+
+/*=========ALTERNATE FUNCTIONS=========*/
+
+void startAccessPoint(){
+  Serial.println();
+  Serial.println("Configuring access point...");
+  
+  if (!WiFi.softAP(esp32_wifi_ssid, esp32_wifi_password)) {
+    Serial.println("ESP32 soft AP creation failed.");
+    while (!WiFi.softAP(esp32_wifi_ssid, esp32_wifi_password)){
+      RGB_error();
+      delay(500);
+    }
+    RGB_write(rgb_on);
+  }
+
+  Serial.println("ESP32 soft AP creation SUCCESS");
+  IPAddress myIP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(myIP);
+  server.begin();
+  Serial.println("Server started"); 
+}
+
+void setConfigFile(){
+  String buf_boxID            = "";
+  String buf_serverName       = "";
+  String buf_ssid             = "";
+  String buf_password         = "";
+  String buf_ssid_reserve     = "";
+  String buf_password_reserve = "";
+
+  WiFiClient client = server.available();   // listen for incoming clients
+  if (client) {
+    Serial.println("New Client.");
+    String currentLine = "";                // make a String to hold incoming data from the client
+    while (client.connected()){
+      if (client.available()){
+        char c = client.read();             // read a byte, then
+        Serial.write(c);                    // print it out the serial monitor
+        if (c == '\n') {                    // if the byte is a newline character
+          if (currentLine.length() == 0) {
+            // boxID
+            client.println("<html><head></head><body><form action=\"192.168.4.1/\"><input type=\"text\" name=\"box_id\"><input type=\"text\" name=\"user_id\"><button type=\"submit\">Send form</button></form></body></html>");
+          }
+        }
+      }
+    }
+  }
+  
 }
 
 void loop(void) {
+
   btnPWD1.tick();
 
-  if (btnPWD1.isSingle() && start) {
-    Serial.println("btnPWD1.isSingle() && start");
-    start = false;
-  } else if (btnPWD1.isSingle() && !start) {
-    Serial.println("btnPWD1.isSingle() && !start");
+  unsigned long currentTime = millis();
+  if (currentTime - activeTime > 60000){
+    activeTime = millis();
+    Serial.println("SLEEP");
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_2, 1);
+    esp_light_sleep_start();
+  }
+
+  if (btnPWD1.isSingle()) {
+    activeTime = millis();
+    Serial.println("btnPWD1.isSingle()");
     if(readNFC()) sendDataToWIFI();
   }
 
   if (btnPWD1.isDouble()) {
+    activeTime = millis();
     Serial.println("btnPWD1.isDouble()");
     show_charge(get_voltage(1), 50, 25, 10);
   }
 
-  if (btnPWD1.isTriple()) {
-    Serial.println("btnPWD1.isTriple()");
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_2, 1);
-    start = true;
-    esp_light_sleep_start();
-  }
 }
 
 void sendDataToSD(String fileName, String data){
@@ -181,13 +267,23 @@ bool sendToWifi(HTTPClient &http, String data, bool ledOn){
   }
 }
 
+void wifi_connecting(WiFiMulti &wifiMulti) {
+  Serial.println("Connecting Wifi...");
+  wifiMulti.run();
+  Serial.print("WiFi.status() = ");
+  Serial.println(WiFi.status());
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+}
+
 void sendDataToWIFI(){
 
   int failSendCount = 0;
 
   // Wifi settings
   WiFiMulti wifiMulti;
-  wifi_setup(wifiMulti);
+  network_config(wifiMulti); //пишем все ssid и пароли из конфига
+  wifi_connecting(wifiMulti);//и подключаемся
 
   WiFiClient client;
   HTTPClient http;
@@ -314,19 +410,6 @@ void RGB_success(){
   RGB_write(off);
 }
 
-void wifi_setup(WiFiMulti &wifiMulti) {
-  wifiMulti.addAP(ssid, password);
-  wifiMulti.addAP(ssid_reserve, password_reserve);
-
-  Serial.println("Connecting Wifi...");
-  wifiMulti.run();
-  Serial.print("WiFi.status() = ");
-  Serial.println(WiFi.status());
-  Serial.print("SSID: ");
-  Serial.println(WiFi.SSID());
-
-}
-
 int get_voltage(bool debug_mode) {
   int voltage = analogRead(BAT_CHARGE);
   if(debug_mode) {
@@ -351,3 +434,15 @@ void show_charge(int voltage, const int bnd_50, const int bnd_25, const int bnd_
   delay(1000);
   RGB_write(off);
 }
+
+// void readConfigFile(){
+//   File configFile = SD.open("/config.txt", FILE_READ);
+//   if(configFile.available()) boxID            = configFile.readStringUntil('\n');
+//   if(configFile.available()) serverName       = configFile.readStringUntil('\n');
+//   if(configFile.available()) ssid             = configFile.readStringUntil('\n');
+//   if(configFile.available()) password         = configFile.readStringUntil('\n');
+//   if(configFile.available()) ssid_reserve     = configFile.readStringUntil('\n');
+//   if(configFile.available()) password_reserve = configFile.readStringUntil('\n');
+//   configFile.close();
+//   Serial.println("Config Setup Success");
+// }
