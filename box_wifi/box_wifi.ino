@@ -30,7 +30,7 @@ const uint8_t yellow[3] = {255,255,0};  //50-25% charge
 const uint8_t orange[3] = {255,128,0};  //25-10% charge
 const uint8_t off[3]    = {0,0,0};
 const uint8_t rgb_on[3] = {255,255,255};
-const uint8_t blue[3]   = {0,128,255};
+const uint8_t blue[3]   = {0,0,255};
 const uint8_t purple[3] = {255,0,255};
 
 AsyncWebServer server(80);
@@ -108,7 +108,7 @@ void server_setup(){
   Serial.println("Server started");
 }
 
-void setConfigFile(){
+bool setConfigFile(){
   while (!userInput){
     RGB_write(yellow);
   }
@@ -116,12 +116,16 @@ void setConfigFile(){
   userInput = false;
   Serial.println("\nOpen config file to write...");
   File cfg_file = SD.open("/config.txt", FILE_WRITE);
-  if (cfg_file) {
-    cfg_file.println(inputMessage);
-  }
 
+  if (!cfg_file) {
+    Serial.println("\nCAN'T OPEN CONFIG FILE !");
+    return false;
+  }
+  
+  cfg_file.println(inputMessage);
   cfg_file.close();
   Serial.println("\nSUCCESS setup config file...");
+  return true;
 }
 
 unsigned long activeTime = 0;
@@ -129,8 +133,8 @@ unsigned long activeTime = 0;
 //WiFi////
 String boxID                    = "asdfv";
 String serverName               = "http://185.241.68.155:8001/send_data";
-const char *esp32_wifi_ssid     = "yourAP";
-const char *esp32_wifi_password = "yourPassword";
+const char *esp32_wifi_ssid     = "cleaning box";
+const char *esp32_wifi_password = "cleaningbox";
 
 //acum//
 #define BAT_CHARGE 34
@@ -165,6 +169,7 @@ void setup(void){
   while (!Serial) delay(10); 
 
   btnPWD1.setType(LOW_PULL);
+  btnPWD1.setTimeout(15000);
   
   pinMode(R, OUTPUT);
   pinMode(G, OUTPUT);
@@ -203,11 +208,7 @@ void setup(void){
  Serial.println("PN53x board");
 
   //config setup
-  if (!config_found()){
-    RGB_write(yellow);
-    startAccessPoint();
-    setConfigFile();
-  }
+  if (!config_found()) doHardReset();
 
   delay(1000);
   RGB_write(off);
@@ -215,10 +216,7 @@ void setup(void){
   activeTime = millis();
 }
 
-void loop(void) {
-
-  btnPWD1.tick();
-
+void checkTimeForSleeping(){
   unsigned long currentTime = millis();
   if (currentTime - activeTime > 60000){
     activeTime = millis();
@@ -226,19 +224,58 @@ void loop(void) {
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_2, 1);
     esp_light_sleep_start();
   }
+}
 
+void checkSingleClick(){
   if (btnPWD1.isSingle()) {
     activeTime = millis();
     Serial.println("btnPWD1.isSingle()");
     if(readNFC()) sendDataToWIFI();
   }
+}
 
+void checkDoubleClick(){
   if (btnPWD1.isDouble()) {
     activeTime = millis();
     Serial.println("btnPWD1.isDouble()");
     show_charge(get_voltage(1), 50, 25, 10);
   }
+}
 
+void checkLongClick(){
+  if (btnPWD1.isHolded()){
+    RGB_write(blue);
+    Serial.println("PRESS BUTTON 3 TIMES TO hard reset");
+    unsigned long currentTime = millis();
+    bool configIsChanged = false;
+    while (millis() - currentTime < 10000){
+      btnPWD1.tick();
+      if (btnPWD1.isTriple()) {
+        configIsChanged = true;
+        doHardReset();
+      }
+    }
+    RGB_write(off);
+    if (!configIsChanged) Serial.println("DO NOT HARD RESET");
+  }
+}
+
+void loop(void) {
+  btnPWD1.tick();
+  checkTimeForSleeping();
+  checkSingleClick();
+  checkDoubleClick();
+  checkLongClick();
+}
+
+void doHardReset(){
+  if(SD.exists("/config.txt")){
+    Serial.println("\nDelete config file ...");
+    SD.remove("/config.txt");
+  }
+  RGB_write(purple);
+  startAccessPoint();
+  if (setConfigFile()) Serial.println("SUCCESS BOX SETUP");
 }
 
 void notFound(AsyncWebServerRequest *request) {
@@ -399,7 +436,7 @@ bool readNFC(){
   uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
   // Wait for an NTAG203 card.  When one is found 'uid' will be populated with
   // the UID, and uidLength will indicate the size of the UUID (normally 7)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 2000);
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 3000);
 
   if (success) {
     // Display some basic information about the card
