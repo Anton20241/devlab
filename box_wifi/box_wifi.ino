@@ -8,8 +8,8 @@
 #include <WiFi.h>
 #include <WiFiMulti.h>
 #include <HTTPClient.h>
-
 #include <Arduino.h>
+
 #ifdef ESP32
   #include <WiFi.h>
   #include <AsyncTCP.h>
@@ -18,6 +18,12 @@
   #include <ESPAsyncTCP.h>
 #endif
 #include <ESPAsyncWebServer.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
+// Define NTP Client to get time
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org");
 
 //RGB////
 #define B 4
@@ -110,7 +116,7 @@ void server_setup(){
 
 bool setConfigFile(){
   while (!userInput){
-    RGB_write(yellow);
+    RGB_write(purple);
   }
   RGB_write(off);
   userInput = false;
@@ -176,26 +182,29 @@ void setup(void){
   pinMode(B, OUTPUT);
   RGB_write(rgb_on);
 
-  // RTC setup
-  RTC.begin();
-  RTC.settimeUnix(1111111);
-
  // SD card setup
  if(!SD.begin(SD_SS)){
-   Serial.println("Card Mount Failed");
-   while (!SD.begin(SD_SS)) {
-     RGB_error();
-     delay(500);
-   }
-   RGB_write(rgb_on);
+  Serial.println("Card Mount Failed");
+  while (!SD.begin(SD_SS)) {
+    RGB_error();
+    delay(500);
+  }
+  RGB_write(rgb_on);
  }
  Serial.println("SD Card Mounted");
 
  if (!SD.exists("/id.txt")) {
-   File myFile = SD.open("/id.txt", FILE_WRITE);
-   myFile.close();
+  File myFile = SD.open("/id.txt", FILE_WRITE);
+  myFile.close();
  }
+
+  //config setup
+  if (!config_found()) doHardReset();
+  RGB_write(rgb_on);
   
+  // RTC setup
+  setTime();
+
  // nfc setup
  if (!nfc.begin()) {
    Serial.println("Didn't find PN53x board");
@@ -207,13 +216,45 @@ void setup(void){
  }
  Serial.println("PN53x board");
 
-  //config setup
-  if (!config_found()) doHardReset();
-
   delay(1000);
   RGB_write(off);
   Serial.println("SUCCESS BOX SETUP");
   activeTime = millis();
+}
+
+void setTimeOnESP() {
+
+  timeClient.begin();
+  timeClient.setTimeOffset(3*3600);
+
+  if(!timeClient.update()){
+    Serial.println("Failed to obtain time");
+    RTC.settimeUnix(RTC.gettimeUnix());
+    return;
+  }
+  
+  RTC.settimeUnix(timeClient.getEpochTime());
+  Serial.print("after set RTC.gettimeUnix = ");
+  Serial.println(RTC.gettimeUnix());
+}
+
+void setTime(){
+  
+  Serial.println("Configuring time...");
+  
+  // Wifi settings
+  WiFiMulti wifiMulti;
+  network_config(wifiMulti); //пишем все ssid и пароли из конфига
+  wifi_connecting(wifiMulti);//и подключаемся
+
+  RTC.begin();
+  if (wifiMulti.run() == WL_CONNECTED){
+    setTimeOnESP();
+  } else {
+    Serial.print("RTC.gettimeUnix = ");
+    Serial.println(RTC.gettimeUnix());
+    RTC.settimeUnix(RTC.gettimeUnix());
+  }
 }
 
 void checkTimeForSleeping(){
@@ -228,6 +269,8 @@ void checkTimeForSleeping(){
 
 void checkSingleClick(){
   if (btnPWD1.isSingle()) {
+    Serial.print("RTC.gettimeUnix = ");
+    Serial.println(RTC.gettimeUnix());
     activeTime = millis();
     Serial.println("btnPWD1.isSingle()");
     if(readNFC()) sendDataToWIFI();
@@ -285,6 +328,10 @@ void notFound(AsyncWebServerRequest *request) {
 void network_config(WiFiMulti &wifiMulti){  // Poco m3;0987654321\nwifi2id;wifi2pas;
   Serial.println("\nOpen config file to read...");
   File cfg_file = SD.open("/config.txt");
+
+  if (!cfg_file){
+    Serial.println("\nCan`t open config file");
+  }
 
   while (cfg_file.available()) {
     String cfg_str = cfg_file.readStringUntil('\n');
