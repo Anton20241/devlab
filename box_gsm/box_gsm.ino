@@ -8,10 +8,24 @@
 #include <WiFi.h>
 #include <WiFiMulti.h>
 #include <HTTPClient.h>
+#include "UnixTime.h"
+
+const uint32_t gmt = 0;
+const uint32_t time_from_gsm_offset_sec = 212998740;
+
+UnixTime timeStamp(gmt);
+
+struct Data_Time{
+  uint16_t year;
+  uint8_t month;
+  uint8_t day;
+  uint8_t hours;
+  uint8_t minutes;
+  uint8_t seconds;
+};
 
 unsigned long activeTime = 0;
-
-const String boxID= "asdfv";
+const String boxID  = "asdfv";
 
 //acum//
 #define BAT_CHARGE 34
@@ -46,98 +60,72 @@ bool start      = false;
 #define G 33
 #define R 32
 
-const uint8_t red[3] =    {255,0,0};    //Индикация ошибок
-const uint8_t green[3] =  {0,255,0};    //100-50% charge
+const uint8_t red[3]    = {255,0,0};    //Индикация ошибок
+const uint8_t green[3]  = {0,255,0};    //100-50% charge
 const uint8_t yellow[3] = {255,255,0};  //50-25% charge
 const uint8_t orange[3] = {255,128,0};  //25-10% charge
-
-const uint8_t off[3] =    {0,0,0};
+const uint8_t off[3]    = {0,0,0};
 const uint8_t rgb_on[3] = {255,255,255};
-const uint8_t blue[3] =   {0,128,255};
+const uint8_t blue[3]   = {0,0,255};
 const uint8_t purple[3] = {255,0,255};
 
 //GSM
 #define RXD2 16
 #define TXD2 17
 
-
-
-
 void setup(void){
+  
   Serial.begin(115200);
   while (!Serial) delay(10); 
   
   btnPWD1.setType(LOW_PULL);
-  
+
+
   pinMode(R, OUTPUT);
   pinMode(G, OUTPUT);
   pinMode(B, OUTPUT);
   RGB_write(rgb_on);
-  
-  // RTC setup
-  RTC.begin();
-  RTC.settimeUnix(1111111);
 
-  Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
-  
-  // SD card setup
-  if(!SD.begin(SD_SS)){
-    Serial.println("Card Mount Failed");
-    while (!SD.begin(SD_SS)) {
-      RGB_error();
-      delay(500);
-    }
-    RGB_write(rgb_on);
+ // SD card setup
+ if(!SD.begin(SD_SS)){
+  Serial.println("Card Mount Failed");
+  while (!SD.begin(SD_SS)) {
+    RGB_error();
+    delay(500);
   }
-  Serial.println("SD Card Mounted");
+  RGB_write(rgb_on);
+ }
+ Serial.println("SD Card Mounted");
 
-  if (!SD.exists("/id.txt")) {
-    File myFile = SD.open("/id.txt", FILE_WRITE);
-    myFile.close();
-  }
-  
-  // nfc setup
-  if (!nfc.begin()) {
-    Serial.println("Didn't find PN53x board");
-    while (!nfc.begin()){
-      RGB_error();
-      delay(500);
-    }
-    RGB_write(rgb_on);
-  }
-  Serial.println("PN53x board");
+ if (!SD.exists("/id.txt")) {
+  File myFile = SD.open("/id.txt", FILE_WRITE);
+  myFile.close();
+ }
+    
+ // nfc setup
+ if (!nfc.begin()) {
+   Serial.println("Didn't find PN53x board");
+   while (!nfc.begin()){
+     RGB_error();
+     delay(500);
+   }
+   RGB_write(rgb_on);
+ }
+ Serial.println("PN53x board");
 
   // sim card setup
-  int simCardFail = 0;
-  String RespCodeStr = "";
-  do{
-    if (simCardFail > 3){
-      RGB_error();
-    }
-    Serial2.println("AT+CSTT=\"internet.mts.ru\",\"mts\",\"mts\"");// Get IMEI
-    updateSerial();
-    Serial2.println("AT+CIICR");
-    updateSerial();
-    if (simCardFail > 3){
-      RGB_error();
-    }
-    Serial2.println("AT+CREG?");
-    delay(1500);
-    RespCodeStr = Serial2.readStringUntil('\n');
-    RespCodeStr = Serial2.readStringUntil('\n');
-    Serial.print("RespCodeStr = ");
-    Serial.println(RespCodeStr);
-    simCardFail++;
-  } while (!(RespCodeStr.indexOf("+CREG") >= 0));
-
+  sim_card_setup();
+  RGB_write(rgb_on);
+  
+  // RTC setup
+  setTime();
+  
   RGB_write(off);
+  Serial.println("SUCCESS BOX SETUP");
   activeTime = millis();
 }
 
-void loop(void) {
-
-  btnPWD1.tick();
-
+void checkTimeForSleeping(){
   unsigned long currentTime = millis();
   if (currentTime - activeTime > 60000){
     activeTime = millis();
@@ -145,19 +133,148 @@ void loop(void) {
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_2, 1);
     esp_light_sleep_start();
   }
+}
 
+void checkSingleClick(){
   if (btnPWD1.isSingle()) {
+    Serial.print("RTC.gettimeUnix = ");
+    Serial.println(RTC.gettimeUnix());
     activeTime = millis();
     Serial.println("btnPWD1.isSingle()");
     if(readNFC()) sendDataToGSM();
   }
+}
 
+void checkDoubleClick(){
   if (btnPWD1.isDouble()) {
     activeTime = millis();
     Serial.println("btnPWD1.isDouble()");
     show_charge(get_voltage(1), 50, 25, 10);
   }
+}
 
+void loop(void) {
+  btnPWD1.tick();
+  checkTimeForSleeping();
+  checkSingleClick();
+  checkDoubleClick();
+}
+
+void sim_card_setup(){
+  Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
+  int simCardFail = 0;
+  String RespCodeStr = "";
+  do{
+    if (simCardFail > 2){
+      RGB_error();
+    }
+    Serial2.println("AT+CSTT=\"internet.mts.ru\",\"mts\",\"mts\"");// Get IMEI
+    updateSerial();
+    Serial2.println("AT+CIICR");
+    updateSerial();
+    if (simCardFail > 2){
+      RGB_error();
+    }
+    Serial2.println("AT+CREG?");
+    delay(1500);
+    RespCodeStr = "";
+    while (Serial2.available()>0) {
+      RespCodeStr += char(Serial2.read());
+    }
+    Serial.print("RespCodeStr = ");
+    Serial.println(RespCodeStr);
+    simCardFail++;
+  } while (!(RespCodeStr.indexOf("+CREG") >= 0));
+}
+
+void parseDataTime(Data_Time &curentDataTime, String dataTime){
+  int space_index_1 = 0;
+  int space_index_2 = dataTime.indexOf("/", space_index_1);
+  String year       = dataTime.substring(space_index_1, space_index_2);
+  space_index_1     = space_index_2 + 1;
+  space_index_2     = dataTime.indexOf("/", space_index_1);
+  String month      = dataTime.substring(space_index_1, space_index_2);
+  space_index_1     = space_index_2 + 1;
+  space_index_2     = dataTime.indexOf(",", space_index_1);
+  String day        = dataTime.substring(space_index_1, space_index_2);
+  space_index_1     = space_index_2 + 1;
+  space_index_2     = dataTime.indexOf(":", space_index_1);
+  String hours      = dataTime.substring(space_index_1, space_index_2);
+  space_index_1     = space_index_2 + 1;
+  space_index_2     = dataTime.indexOf(":", space_index_1);
+  String minutes    = dataTime.substring(space_index_1, space_index_2);
+  space_index_1     = space_index_2 + 1;
+  space_index_2     = dataTime.indexOf("+", space_index_1);
+  String seconds    = dataTime.substring(space_index_1, space_index_2);
+  
+  curentDataTime.year     = strtol(year.c_str(),    NULL, 0);
+  curentDataTime.month    = strtol(month.c_str(),   NULL, 0);
+  curentDataTime.day      = strtol(day.c_str(),     NULL, 0);
+  curentDataTime.hours    = strtol(hours.c_str(),   NULL, 0);
+  curentDataTime.minutes  = strtol(minutes.c_str(), NULL, 0);
+  curentDataTime.seconds  = strtol(seconds.c_str(), NULL, 0);
+
+  
+}
+
+void setTimeOnESP(String dataTime) {
+  Data_Time curentDataTime;
+  parseDataTime(curentDataTime, dataTime);
+  unsigned long epochTime = userGetEpochTime(curentDataTime.year, curentDataTime.month, curentDataTime.day,
+                                   curentDataTime.hours, curentDataTime.minutes, curentDataTime.seconds);
+  Serial.print("epochTime = ");
+  Serial.println(epochTime);
+  epochTime += time_from_gsm_offset_sec;
+  Serial.print("epochTime + time_from_gsm_offset_sec = ");
+  Serial.println(epochTime);
+  RTC.settimeUnix(epochTime);
+                                   
+  Serial.print("after set RTC.gettimeUnix = ");
+  Serial.println(RTC.gettimeUnix());
+}
+
+unsigned long userGetEpochTime(uint16_t year, uint8_t month, uint8_t day, uint8_t hours, uint8_t minutes, uint8_t seconds){
+  Serial.println(year);
+  Serial.println(month);
+  Serial.println(day);
+  Serial.println(hours);
+  Serial.println(minutes);
+  Serial.println(seconds);
+  timeStamp.setDateTime(year + 2000, month, day, hours, minutes, seconds); //2017, 1, 1, 10, 4, 22
+  Serial.println(timeStamp.getUnix());
+  return timeStamp.getUnix();
+}
+
+void setTime(){
+  
+  Serial.println("Configuring time...");
+  Serial2.println("AT+CCLK?");
+  delay(1500);
+
+  String RespCodeStr = "";
+  while (Serial2.available()>0) {
+    RespCodeStr += char(Serial2.read());
+  }
+  Serial.print("RespCodeStr = ");
+  Serial.println(RespCodeStr);
+
+  String clockString = "";
+  if (!RespCodeStr.isEmpty() && RespCodeStr.indexOf("+CCLK:") >= 0){
+    int x = RespCodeStr.indexOf(String('"')) + 1;   // Find the first occurance of an open quotation.  This is where we begin to read from
+    int y = RespCodeStr.lastIndexOf(String('"')); // Find the last occurance of an open quotation. This is where we end.
+    clockString = RespCodeStr.substring(x,y);
+    Serial.print("clockString = ");
+    Serial.println(clockString);
+  }
+  
+  RTC.begin();
+  if (!clockString.isEmpty()){
+    setTimeOnESP(clockString);
+  } else {
+    Serial.print("RTC.gettimeUnix = ");
+    Serial.println(RTC.gettimeUnix());
+    RTC.settimeUnix(RTC.gettimeUnix());
+  }
 }
 
 void sendDataToSD(String fileName, String data){
@@ -211,21 +328,18 @@ bool sendToGSM(String data, bool ledOn){
   updateSerial();
   Serial2.println("AT+HTTPACTION=1");// Send data request to the server
   delay(1500);
-  String RespCodeStr = Serial2.readStringUntil('\n');
-  RespCodeStr = Serial2.readStringUntil('\n');
-  RespCodeStr = Serial2.readStringUntil('\n');
+  String RespCodeStr = "";
+  while (Serial2.available()>0) {
+    RespCodeStr += char(Serial2.read());
+  }
+
   Serial2.println("AT+HTTPTERM");// Send data request to the server
   updateSerial();
 
-  Serial.print("data = ");
-  Serial.println(data);
   Serial.print("RespCodeStr = ");
   Serial.println(RespCodeStr);
-  Serial.println("lohhh");
 
-  if (!RespCodeStr.isEmpty() && RespCodeStr.indexOf("200") > 0){
-    Serial.println("here1");
-    Serial.println(RespCodeStr.indexOf("200"));
+  if (!RespCodeStr.isEmpty() && RespCodeStr.indexOf("200") >= 0){
     if (ledOn){
       RGB_success();
       RGB_success();
@@ -294,7 +408,7 @@ bool readNFC(){
   uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
   // Wait for an NTAG203 card.  When one is found 'uid' will be populated with
   // the UID, and uidLength will indicate the size of the UUID (normally 7)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 500);
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 1000);
 
   if (success) {
     // Display some basic information about the card

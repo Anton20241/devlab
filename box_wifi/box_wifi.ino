@@ -202,9 +202,6 @@ void setup(void){
   if (!config_found()) doHardReset();
   RGB_write(rgb_on);
   
-  // RTC setup
-  setTime();
-
  // nfc setup
  if (!nfc.begin()) {
    Serial.println("Didn't find PN53x board");
@@ -216,7 +213,9 @@ void setup(void){
  }
  Serial.println("PN53x board");
 
-  delay(1000);
+  // RTC setup
+  setTime();
+
   RGB_write(off);
   Serial.println("SUCCESS BOX SETUP");
   activeTime = millis();
@@ -483,7 +482,7 @@ bool readNFC(){
   uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
   // Wait for an NTAG203 card.  When one is found 'uid' will be populated with
   // the UID, and uidLength will indicate the size of the UUID (normally 7)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 3000);
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 1000);
 
   if (success) {
     // Display some basic information about the card
@@ -550,7 +549,7 @@ void RGB_write(const uint8_t* color) {
 
 void RGB_error(){
   RGB_write(red);
-  delay(1000);
+  delay(300);
   RGB_write(off);
 }
 
