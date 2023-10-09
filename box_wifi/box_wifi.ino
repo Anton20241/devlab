@@ -182,25 +182,25 @@ void setup(void){
   pinMode(B, OUTPUT);
   RGB_write(rgb_on);
 
-// // SD card setup
-// if(!SD.begin(SD_SS)){
-//  Serial.println("Card Mount Failed");
-//  while (!SD.begin(SD_SS)) {
-//    RGB_error();
-//    delay(500);
-//  }
-//  RGB_write(rgb_on);
-// }
-// Serial.println("SD Card Mounted");
-//
-// if (!SD.exists("/id.txt")) {
-//  File myFile = SD.open("/id.txt", FILE_WRITE);
-//  myFile.close();
-// }
+ // SD card setup
+ if(!SD.begin(SD_SS)){
+  Serial.println("Card Mount Failed");
+  while (!SD.begin(SD_SS)) {
+    RGB_error();
+    delay(500);
+  }
+  RGB_write(rgb_on);
+ }
+ Serial.println("SD Card Mounted");
 
-//  //config setup
-//  if (!config_found()) doHardReset();
-//  RGB_write(rgb_on);
+ if (!SD.exists("/id.txt")) {
+  File myFile = SD.open("/id.txt", FILE_WRITE);
+  myFile.close();
+ }
+
+  //config setup
+  if (!config_found()) doHardReset();
+  RGB_write(rgb_on);
   
  // nfc setup
  if (!nfc.begin()) {
@@ -213,9 +213,13 @@ void setup(void){
  }
  Serial.println("PN53x board");
 
-//  // RTC setup
-//  setTime();
-
+  RTC.begin();
+  int a = random(1, 5);
+  if (a == 1){
+    // RTC setup
+    setTime();
+  }
+  
   RGB_write(off);
   Serial.println("SUCCESS BOX SETUP");
   activeTime = millis();
@@ -233,6 +237,8 @@ void setTimeOnESP() {
   }
   
   RTC.settimeUnix(timeClient.getEpochTime());
+  Serial.print("timeClient.getEpochTime() = ");
+  Serial.println(timeClient.getEpochTime());
   Serial.print("after set RTC.gettimeUnix = ");
   Serial.println(RTC.gettimeUnix());
 }
@@ -246,7 +252,6 @@ void setTime(){
   network_config(wifiMulti); //пишем все ssid и пароли из конфига
   wifi_connecting(wifiMulti);//и подключаемся
 
-  RTC.begin();
   if (wifiMulti.run() == WL_CONNECTED){
     setTimeOnESP();
   } else {
@@ -375,14 +380,20 @@ void startAccessPoint(){
   server_setup();
 }
 
-void sendDataToSD(String fileName, String data){
+void sendDataToSD(String fileName, String data, bool ledOn){
   File myFile = SD.open(fileName, FILE_APPEND);
   if (myFile) {
     myFile.println(data);
     Serial.println(data + " send to " + fileName);
+    if (ledOn){
+      RGB_success();
+    }
   }
   else {
     Serial.println("Can`t open file " + fileName);
+    if (ledOn){
+      RGB_error();
+    }
   }
   myFile.close();
 }
@@ -407,15 +418,10 @@ bool sendToWifi(HTTPClient &http, String data, bool ledOn){
   if (httpResponseCode == 200){
     if (ledOn){
       RGB_success();
-      RGB_success();
     }
     return true;
   } else {
     Serial.println("error wifi sending");
-    if (ledOn){
-      RGB_error();
-      RGB_error();
-    }
     return false;
   }
 }
@@ -444,7 +450,7 @@ void sendDataToWIFI(){
   http.addHeader("Content-Type", "application/json");   // Specify content-type header
 
   if(!sendToWifi(http, result, 0)){
-    sendDataToSD("/id.txt", result);
+    sendDataToSD("/id.txt", result, 0);
     failSendCount++;
     Serial.print("failSendCount = ");
     Serial.println(failSendCount);
@@ -461,7 +467,7 @@ void sendDataToWIFI(){
                                                           // символа окончания + перевод каретки (без удаления строки)
       if(!sendToWifi(http, buffer, 0)){
         buffer.trim();
-        sendDataToSD("/id2.txt", buffer);
+        sendDataToSD("/id2.txt", buffer, 0);
         failSendCount++;
       }
     }
@@ -508,7 +514,6 @@ bool readNFC(){
             if (i == 5) read_data += tagData.substring(0, 4);
             tagData = "";
             nfc.PrintHexChar(data, 16);
-            delay(1000);
           }
           else
           {
@@ -551,8 +556,6 @@ bool readNFC(){
     return false;
   }
 }
-
-
 
 void printHexCharAsOneLine(const byte *data, const uint32_t numBytes) {
   uint32_t szPos;

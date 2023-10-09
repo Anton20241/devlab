@@ -124,7 +124,10 @@ void setup(void){
   RGB_write(rgb_on);
   
   // RTC setup
-  setTime();
+  //setTime();
+  RTC.begin();
+  RTC.settimeUnix(111111);
+  
   
   RGB_write(off);
   Serial.println("SUCCESS BOX SETUP");
@@ -190,7 +193,7 @@ void sim_card_setup(){
     Serial.print("RespCodeStr = ");
     Serial.println(RespCodeStr);
     simCardFail++;
-  } while (!(RespCodeStr.indexOf("+CREG") >= 0));
+  } while (!(RespCodeStr.indexOf("+CREG") >= 0) || RespCodeStr.indexOf("AT+CREG?") >= 0);
 }
 
 void parseDataTime(Data_Time &curentDataTime, String dataTime){
@@ -219,8 +222,6 @@ void parseDataTime(Data_Time &curentDataTime, String dataTime){
   curentDataTime.hours    = strtol(hours.c_str(),   NULL, 0);
   curentDataTime.minutes  = strtol(minutes.c_str(), NULL, 0);
   curentDataTime.seconds  = strtol(seconds.c_str(), NULL, 0);
-
-  
 }
 
 void setTimeOnESP(String dataTime) {
@@ -283,14 +284,20 @@ void setTime(){
   }
 }
 
-void sendDataToSD(String fileName, String data){
+void sendDataToSD(String fileName, String data, bool ledOn){
   File myFile = SD.open(fileName, FILE_APPEND);
   if (myFile) {
     myFile.println(data);
     Serial.println(data + " send to " + fileName);
+    if (ledOn){
+      RGB_success();
+    }
   }
   else {
     Serial.println("Can`t open file " + fileName);
+    if (ledOn){
+      RGB_error();
+    }
   }
   myFile.close();
 }
@@ -318,6 +325,10 @@ void updateSerial()
 }
 
 bool sendToGSM(String data, bool ledOn){
+  Serial2.println("AT+CSTT=\"internet.mts.ru\",\"mts\",\"mts\"");// Get IMEI
+  updateSerial();
+  Serial2.println("AT+CIICR");
+  updateSerial();
   Serial2.println("AT+HTTPINIT"); //The basic adhere network command of Internet connection
   updateSerial();
   Serial2.println("AT+HTTPPARA=\"CID\",\"1\"");//Set PDP parameter
@@ -333,31 +344,24 @@ bool sendToGSM(String data, bool ledOn){
   Serial2.write(26);// Terminator
   updateSerial();
   Serial2.println("AT+HTTPACTION=1");// Send data request to the server
+  updateSerial();
+  Serial2.println("AT+HTTPTERM");// Send data request to the server
+  updateSerial();
   delay(1500);
   String RespCodeStr = "";
   while (Serial2.available()>0) {
     RespCodeStr += char(Serial2.read());
   }
-
-  Serial2.println("AT+HTTPTERM");// Send data request to the server
-  updateSerial();
-
   Serial.print("RespCodeStr = ");
   Serial.println(RespCodeStr);
 
   if (!RespCodeStr.isEmpty() && RespCodeStr.indexOf("200") >= 0){
     if (ledOn){
       RGB_success();
-      RGB_success();
     }
     return true;
   } else {
-    Serial.println("here2");
-    Serial.println("error gsm connection");
-    if (ledOn){
-      RGB_error();
-      RGB_error();
-    }
+    Serial.println("error gsm sending");
     return false;
   }
 }
@@ -366,21 +370,11 @@ void sendDataToGSM(){
 
   int failSendCount = 0;
 
-
-
-
-
-
-
-
-  
-
   if(!sendToGSM(result, 0)){
-    sendDataToSD("/id.txt", result);
+    sendDataToSD("/id.txt", result, 0);
     failSendCount++;
     Serial.print("failSendCount = ");
     Serial.println(failSendCount);
-    
     return;
   }
 
@@ -393,7 +387,7 @@ void sendDataToGSM(){
                                                           // символа окончания + перевод каретки (без удаления строки)
       if(!sendToGSM(buffer, 0)){
         buffer.trim();
-        sendDataToSD("/id2.txt", buffer);
+        sendDataToSD("/id2.txt", buffer, 0);
         failSendCount++;
       }
     }
@@ -405,68 +399,90 @@ void sendDataToGSM(){
   renameFile();
   Serial.print("failSendCount = ");
   Serial.println(failSendCount);
-  
 }
 
 bool readNFC(){
   uint8_t success;
   uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
   uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-  // Wait for an NTAG203 card.  When one is found 'uid' will be populated with
-  // the UID, and uidLength will indicate the size of the UUID (normally 7)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 1000);
 
+  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
+  // 'uid' will be populated with the UID, and uidLength will indicate
+  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 1000);
+  
   if (success) {
-    // Display some basic information about the card
-    if (uidLength == 7) {
-      uint8_t data[32];
-      for (uint8_t i = 7; i < 10; i++) { // starting serial output at Page 7 and stop reading at Page 11
-        success = nfc.ntag2xx_ReadPage(i, data);
-        // Display the results, depending on 'success'
-        if (success) {
-          printHexCharAsOneLine(data,4);
+    if (uidLength == 4){
+      uint8_t keya[6] = { 0xD3, 0xF7, 0xD3, 0xF7, 0xD3, 0xF7 };
+
+      // Start with block 4 (the first block of sector 1) since sector 0
+      // contains the manufacturer data and it's probably better just
+      // to leave it alone unless you know what you're doing
+      success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, keya);
+
+      if (success){
+        Serial.println("Sector 1 (Blocks 4..7) has been authenticated");
+        uint8_t data[16];
+        String read_data = "";
+        // Try to read the contents of block 4 & 5
+        for(int i = 4; i <= 5; i++){
+          success = nfc.mifareclassic_ReadDataBlock(i, data);
+          if (success){
+            printHexCharAsOneLine(data, 16);
+            if (i == 4) read_data += tagData.substring(tagData.length() - 5, tagData.length());
+            if (i == 5) read_data += tagData.substring(0, 4);
+            tagData = "";
+            nfc.PrintHexChar(data, 16);
+          }
+          else
+          {
+            Serial.println("Ooops ... unable to read the requested block.  Try another key?");
+            RGB_error();
+            return false;
+          }
         }
-        else {
-          Serial.println("Unable to read the requested page!");
-          RGB_error();
-          return false;
-        }
+        //do smth
+        Serial.println("read_data = ");
+        Serial.println(read_data);
+
+        result = "";
+        result = "{\"box_id\":\"";
+        result += boxID;
+        result += "\", \"mark_id\":\"";
+        result += read_data;
+        result += "\", \"event_time\":\"";
+        result += String(RTC.gettimeUnix());
+        result += "\"}";
+        // {"box_id":"asdfv", "mark_id":"444444444", "event_time":"123123"}
+        Serial.println(result);
+        RGB_success();
+        return true;
       }
-    
-      tagData = "";
-      result  = "";
-      result  = "{\"box_id\":\"";
-      result += boxID;
-      result += "\", \"mark_id\":\"";
-      result += tagData.substring(2,11);
-      result += "\", \"event_time\":\"";
-      result += String(RTC.gettimeUnix());
-      result += "\"}";
-      // {"box_id":"asdfv", "mark_id":"444444444", "event_time":"123123"}
-      Serial.println(result);
-      RGB_success();
-      return true;
-    }
-    else {
-      Serial.println("This doesn't seem to be an NTAG203 tag (UUID length != 7 bytes)!");
+      else
+      {
+        Serial.println("Ooops ... authentication failed: Try another key?");
+        RGB_error();
+        return false;
+      }
+    } else{
+      Serial.println("This doesn't seem to be an Mifare Classic tag (UUID length != 4 bytes)!");
       RGB_error();
       return false;
-    }  
-  }
-  else {
+    }
+  } else {
     Serial.println("cant read tag");
     RGB_error();
     return false;
   }
 }
 
-
-
 void printHexCharAsOneLine(const byte *data, const uint32_t numBytes) {
   uint32_t szPos;
   for (szPos = 0; szPos < numBytes; szPos++) {
-    newChar = ((char)data[szPos]); //makes the character into a variable
-    tagData += newChar; //adds that character to the result string
+    if (data[szPos] > 0x1F){
+      newChar = ((char)data[szPos]); //makes the character into a variable
+      tagData += newChar; //adds that character to the result string
+    }
   }
 }
 
