@@ -192,7 +192,7 @@ void sim_card_setup(){
     Serial.print("RespCodeStr = ");
     Serial.println(RespCodeStr);
     simCardFail++;
-  } while (!(RespCodeStr.indexOf("+CREG") >= 0) || RespCodeStr.indexOf("AT+CREG?") >= 0);
+  } while (!(RespCodeStr.indexOf("+CREG") >= 0));
 }
 
 void parseDataTime(Data_Time &curentDataTime, String dataTime){
