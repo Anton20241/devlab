@@ -124,9 +124,8 @@ void setup(void){
   RGB_write(rgb_on);
   
   // RTC setup
-  //setTime();
   RTC.begin();
-  RTC.settimeUnix(111111);
+//  RTC.settimeUnix(111111);
   
   
   RGB_write(off);
