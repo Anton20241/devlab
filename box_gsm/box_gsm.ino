@@ -329,6 +329,8 @@ bool sendToGSM(String data, bool ledOn){
   updateSerial();
   Serial2.println("AT+CIICR");
   updateSerial();
+  Serial2.println("AT+HTTPTERM");// Send data request to the server
+  updateSerial();
   Serial2.println("AT+HTTPINIT"); //The basic adhere network command of Internet connection
   updateSerial();
   Serial2.println("AT+HTTPPARA=\"CID\",\"1\"");//Set PDP parameter
@@ -344,9 +346,8 @@ bool sendToGSM(String data, bool ledOn){
   Serial2.write(26);// Terminator
   updateSerial();
   Serial2.println("AT+HTTPACTION=1");// Send data request to the server
-  updateSerial();
+  delay(1500);
   Serial2.println("AT+HTTPTERM");// Send data request to the server
-  updateSerial();
   delay(1500);
   String RespCodeStr = "";
   while (Serial2.available()>0) {
@@ -361,6 +362,9 @@ bool sendToGSM(String data, bool ledOn){
     }
     return true;
   } else {
+    if (ledOn){
+      RGB_error();
+    }
     Serial.println("error gsm sending");
     return false;
   }
@@ -370,7 +374,7 @@ void sendDataToGSM(){
 
   int failSendCount = 0;
 
-  if(!sendToGSM(result, 0)){
+  if(!sendToGSM(result, 1)){
     sendDataToSD("/id.txt", result, 0);
     failSendCount++;
     Serial.print("failSendCount = ");
@@ -385,7 +389,7 @@ void sendDataToGSM(){
     while (myFile.available()){
       String buffer = myFile.readStringUntil('\n');      // Считываем с карты весь дотекст в строку до 
                                                           // символа окончания + перевод каретки (без удаления строки)
-      if(!sendToGSM(buffer, 0)){
+      if(!sendToGSM(buffer, 1)){
         buffer.trim();
         sendDataToSD("/id2.txt", buffer, 0);
         failSendCount++;

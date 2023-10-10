@@ -421,6 +421,9 @@ bool sendToWifi(HTTPClient &http, String data, bool ledOn){
     }
     return true;
   } else {
+    if (ledOn){
+      RGB_error();
+    }
     Serial.println("error wifi sending");
     return false;
   }
