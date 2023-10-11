@@ -137,7 +137,7 @@ bool setConfigFile(){
 unsigned long activeTime = 0;
 
 //WiFi////
-String boxID                    = "asdfv";
+String boxID                    = "asdrt";
 String serverName               = "http://185.241.68.155:8001/send_data";
 const char *esp32_wifi_ssid     = "cleaning box";
 const char *esp32_wifi_password = "cleaningbox";
