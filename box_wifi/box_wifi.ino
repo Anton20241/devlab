@@ -221,10 +221,10 @@ void setup(void){
   if (!config_found()) doHardReset();
   RGB_write(rgb_on);
 
+  //rtc setup
   RTC.begin();
   int a = random(1, 5);
   if (a == 1){
-    // RTC setup
     setTime();
   }
   
