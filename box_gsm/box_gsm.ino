@@ -1,3 +1,11 @@
+#define DEBUG_ON 1
+#define DEBUG_OFF 0
+#define MODE DEBUG_OFF
+
+// #if MODE == DEBUG_ON
+// #elif MODE == DEBUG_OFF
+// #endif
+
 #include "FS.h"
 #include "SD.h"
 #include <SPI.h>
@@ -288,15 +296,19 @@ void sendDataToSD(String fileName, String data, bool ledOn){
   if (myFile) {
     myFile.println(data);
     Serial.println(data + " send to " + fileName);
+    #if MODE == DEBUG_OFF
     if (ledOn){
       RGB_success();
     }
+    #endif
   }
   else {
     Serial.println("Can`t open file " + fileName);
+    #if MODE == DEBUG_OFF
     if (ledOn){
       RGB_error();
     }
+    #endif
   }
   myFile.close();
 }
@@ -341,9 +353,9 @@ bool sendToGSM(String data, bool ledOn){
   Serial2.println("AT+HTTPDATA");// Connect to the server then the server will send back former data
   updateSerial();
   Serial2.println(data);// Send data request to the server
-  updateSerial();
+  delay(1500);
   Serial2.write(26);// Terminator
-  updateSerial();
+  delay(1500);
   Serial2.println("AT+HTTPACTION=1");// Send data request to the server
   delay(1500);
   Serial2.println("AT+HTTPTERM");// Send data request to the server
@@ -354,6 +366,7 @@ bool sendToGSM(String data, bool ledOn){
   }
   Serial.print("RespCodeStr = ");
   Serial.println(RespCodeStr);
+  Serial.println("END OF RespCodeStr");
 
   if (!RespCodeStr.isEmpty() && RespCodeStr.indexOf("200") >= 0){
     if (ledOn){
@@ -361,38 +374,49 @@ bool sendToGSM(String data, bool ledOn){
     }
     return true;
   } else {
+    #if MODE == DEBUG_ON
     if (ledOn){
       RGB_error();
     }
+    #endif
     Serial.println("error gsm sending");
     return false;
   }
 }
 
 void sendDataToGSM(){
-
+  RGB_write(yellow);
+  activeTime = millis();
   int failSendCount = 0;
 
   if(!sendToGSM(result, 1)){
-    sendDataToSD("/id.txt", result, 0);
+    RGB_write(yellow);
+    sendDataToSD("/id.txt", result, 1);
+    RGB_write(yellow);
     failSendCount++;
     Serial.print("failSendCount = ");
     Serial.println(failSendCount);
+    RGB_write(off);
     return;
   }
-
+  RGB_write(yellow);
+  activeTime = millis();
   // Send data from SD to wifi
   File myFile = SD.open("/id.txt", FILE_READ);
   if (myFile){
     Serial.println("/id.txt:");
     while (myFile.available()){
+      activeTime = millis();
       String buffer = myFile.readStringUntil('\n');      // Считываем с карты весь дотекст в строку до 
                                                           // символа окончания + перевод каретки (без удаления строки)
-      if(!sendToGSM(buffer, 1)){
+      if(!sendToGSM(buffer, 0)){
+        RGB_write(yellow);
         buffer.trim();
         sendDataToSD("/id2.txt", buffer, 0);
+        RGB_write(yellow);
         failSendCount++;
       }
+      RGB_write(yellow);
     }
   } else {
     Serial.println("error opening /id.txt");
@@ -402,6 +426,7 @@ void sendDataToGSM(){
   renameFile();
   Serial.print("failSendCount = ");
   Serial.println(failSendCount);
+  RGB_write(off);
 }
 
 bool readNFC(){
@@ -502,6 +527,10 @@ void RGB_write(const uint8_t* color) {
 }
 
 void RGB_error(){
+  RGB_write(red);
+  delay(300);
+  RGB_write(off);
+  delay(300);
   RGB_write(red);
   delay(300);
   RGB_write(off);

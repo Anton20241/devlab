@@ -1,3 +1,11 @@
+#define DEBUG_ON 1
+#define DEBUG_OFF 0
+#define MODE DEBUG_ON
+
+// #if MODE == DEBUG_ON
+// #elif MODE == DEBUG_OFF
+// #endif
+
 #include "FS.h"
 #include "SD.h"
 #include <SPI.h>
@@ -197,10 +205,6 @@ void setup(void){
   File myFile = SD.open("/id.txt", FILE_WRITE);
   myFile.close();
  }
-
-  //config setup
-  if (!config_found()) doHardReset();
-  RGB_write(rgb_on);
   
  // nfc setup
  if (!nfc.begin()) {
@@ -212,6 +216,10 @@ void setup(void){
    RGB_write(rgb_on);
  }
  Serial.println("PN53x board");
+
+  //config setup
+  if (!config_found()) doHardReset();
+  RGB_write(rgb_on);
 
   RTC.begin();
   int a = random(1, 5);
@@ -385,15 +393,19 @@ void sendDataToSD(String fileName, String data, bool ledOn){
   if (myFile) {
     myFile.println(data);
     Serial.println(data + " send to " + fileName);
+    #if MODE == DEBUG_OFF
     if (ledOn){
       RGB_success();
     }
+    #endif
   }
   else {
     Serial.println("Can`t open file " + fileName);
+    #if MODE == DEBUG_OFF
     if (ledOn){
       RGB_error();
     }
+    #endif
   }
   myFile.close();
 }
@@ -421,9 +433,11 @@ bool sendToWifi(HTTPClient &http, String data, bool ledOn){
     }
     return true;
   } else {
+    #if MODE == DEBUG_ON
     if (ledOn){
       RGB_error();
     }
+    #endif
     Serial.println("error wifi sending");
     return false;
   }
@@ -439,7 +453,8 @@ void wifi_connecting(WiFiMulti &wifiMulti) {
 }
 
 void sendDataToWIFI(){
-
+  RGB_write(yellow);
+  activeTime = millis();
   int failSendCount = 0;
 
   // Wifi settings
@@ -452,27 +467,35 @@ void sendDataToWIFI(){
   http.begin(client, serverName);                       // Your Domain name with URL path or IP address with path
   http.addHeader("Content-Type", "application/json");   // Specify content-type header
 
-  if(!sendToWifi(http, result, 0)){
-    sendDataToSD("/id.txt", result, 0);
+  if(!sendToWifi(http, result, 1)){
+    RGB_write(yellow);
+    sendDataToSD("/id.txt", result, 1);
+    RGB_write(yellow);
     failSendCount++;
     Serial.print("failSendCount = ");
     Serial.println(failSendCount);
     http.end();
+    RGB_write(off);
     return;
   }
-
+  RGB_write(yellow);
+  activeTime = millis();
   // Send data from SD to wifi
   File myFile = SD.open("/id.txt", FILE_READ);
   if (myFile){
     Serial.println("/id.txt:");
     while (myFile.available()){
+      activeTime = millis();
       String buffer = myFile.readStringUntil('\n');      // Считываем с карты весь дотекст в строку до 
                                                           // символа окончания + перевод каретки (без удаления строки)
       if(!sendToWifi(http, buffer, 0)){
+        RGB_write(yellow);
         buffer.trim();
         sendDataToSD("/id2.txt", buffer, 0);
+        RGB_write(yellow);
         failSendCount++;
       }
+      RGB_write(yellow);
     }
   } else {
     Serial.println("error opening /id.txt");
@@ -483,6 +506,7 @@ void sendDataToWIFI(){
   Serial.print("failSendCount = ");
   Serial.println(failSendCount);
   http.end();
+  RGB_write(off);
 }
 
 bool readNFC(){
@@ -583,6 +607,10 @@ void RGB_write(const uint8_t* color) {
 }
 
 void RGB_error(){
+  RGB_write(red);
+  delay(300);
+  RGB_write(off);
+  delay(300);
   RGB_write(red);
   delay(300);
   RGB_write(off);
